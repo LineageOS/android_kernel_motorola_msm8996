@@ -49,6 +49,19 @@
 #include <soc/qcom/memory_dump.h>
 #include <net/cnss.h>
 #include "cnss_common.h"
+//Moto, read MACs from boot params
+#include <linux/of.h>
+#include <linux/of_address.h>
+
+/* Moto read MACs from boot params instead of NV file */
+#define MOTO_UTAGS_MAC
+
+#ifdef MOTO_UTAGS_MAC
+#define WIFI_MAC_BOOTARG "androidboot.wifimacaddr="
+#define MACSTRLEN 17
+#define MAC_ADDR_ARRAY(a) (a)[0], (a)[1], (a)[2], (a)[3], (a)[4], (a)[5]
+#define MAC_ADDRESS_STR "%02x:%02x:%02x:%02x:%02x:%02x"
+#endif
 
 #ifdef CONFIG_WCNSS_MEM_PRE_ALLOC
 #include <net/cnss_prealloc.h>
@@ -2910,6 +2923,19 @@ static int cnss_init_dump_entry(void)
 	return msm_dump_data_register(MSM_DUMP_TABLE_APPS, &dump_entry);
 }
 
+#ifdef MOTO_UTAGS_MAC
+static inline void strtomac(char * buf, unsigned char macaddr[6]) {
+	if (strchr(buf, ':'))
+		sscanf(buf, "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx",
+				&macaddr[0],&macaddr[1], &macaddr[2], &macaddr[3], &macaddr[4], &macaddr[5]);
+	else if (strchr(buf, '-'))
+		sscanf(buf, "%hhx-%hhx-%hhx-%hhx-%hhx-%hhx",
+				&macaddr[0],&macaddr[1], &macaddr[2], &macaddr[3], &macaddr[4], &macaddr[5]);
+	else
+		pr_err("%s,Can not parse mac address: %s", __func__,buf);
+}
+#endif
+
 static int cnss_probe(struct platform_device *pdev)
 {
 	int ret = 0;
@@ -2920,6 +2946,9 @@ static int cnss_probe(struct platform_device *pdev)
 	struct resource *res;
 	u32 ramdump_size = 0;
 	u32 smmu_iova_address[2];
+#ifdef MOTO_UTAGS_MAC
+	struct device_node *chosen_node = NULL;
+#endif
 
 	if (penv)
 		return -ENODEV;
@@ -3049,6 +3078,60 @@ static int cnss_probe(struct platform_device *pdev)
 	}
 
 skip_ramdump:
+
+#ifdef MOTO_UTAGS_MAC
+	//Moto, read MACs from bootparams
+	chosen_node = of_find_node_by_name(NULL, "chosen");
+	if (!chosen_node) {
+		pr_err("%s: get chosen node read failed\n", __func__);
+	} else {
+		int len=0;
+		const char *cmd_line = NULL;
+		cmd_line = of_get_property(chosen_node, "bootargs", &len);
+		if (!cmd_line || len <= 0) {
+			pr_err("%s: get wlan MACs bootargs failed\n", __func__);
+		} else {
+			char * mac_idx = NULL;
+			mac_idx = strstr(cmd_line, WIFI_MAC_BOOTARG);
+			if (mac_idx == NULL) {
+				pr_err("%s: " WIFI_MAC_BOOTARG " not present in bootargs", __func__);
+			} else {
+				char macStr1[MACSTRLEN+1] ={0};
+				char macStr2[MACSTRLEN+1] ={0};
+
+				// extract 2 MACs from boot params
+				mac_idx += strlen(WIFI_MAC_BOOTARG);
+				memcpy(macStr1,mac_idx,MACSTRLEN);
+				mac_idx += MACSTRLEN;
+				//IKVPREL1L-627:Handle inter MAC separator if any
+				if ( *mac_idx == ',' || *mac_idx == '-')
+					mac_idx ++;
+				else
+					pr_err(" No inter MAC separator used");
+
+				memcpy(macStr2,mac_idx,MACSTRLEN);
+				pr_err("%s: MAC1 from bootparams=%s\n", __func__,macStr1);
+				pr_err("%s: MAC2 from boot params=%s\n", __func__,macStr2);
+				strtomac(macStr1,penv->wlan_mac_addr.mac_addr[0]);
+				strtomac(macStr2,penv->wlan_mac_addr.mac_addr[1]);
+
+				// generate other 2 MACs
+				memcpy(penv->wlan_mac_addr.mac_addr[2], penv->wlan_mac_addr.mac_addr[0], ETH_ALEN);
+				memcpy(penv->wlan_mac_addr.mac_addr[3], penv->wlan_mac_addr.mac_addr[1], ETH_ALEN);
+				// Set local administered bit to derive other two MACs
+				penv->wlan_mac_addr.mac_addr[2][0] |= 1 << 1;
+				penv->wlan_mac_addr.mac_addr[3][0] |= 1 << 1;
+				penv->wlan_mac_addr.no_of_mac_addr_set = 4;
+				penv->is_wlan_mac_set = true;
+
+				pr_debug("%s: Mac1 Addr: "  MAC_ADDRESS_STR, __func__, MAC_ADDR_ARRAY(penv->wlan_mac_addr.mac_addr[0]));
+				pr_debug("%s: Mac2 Addr: "  MAC_ADDRESS_STR, __func__, MAC_ADDR_ARRAY(penv->wlan_mac_addr.mac_addr[1]));
+				pr_debug("%s: Mac3 Addr: "  MAC_ADDRESS_STR, __func__, MAC_ADDR_ARRAY(penv->wlan_mac_addr.mac_addr[2]));
+				pr_debug("%s: Mac4 Addr: "  MAC_ADDRESS_STR, __func__, MAC_ADDR_ARRAY(penv->wlan_mac_addr.mac_addr[3]));
+			}
+		}
+	}
+#endif
 	penv->modem_current_status = 0;
 
 	if (penv->notify_modem_status) {
