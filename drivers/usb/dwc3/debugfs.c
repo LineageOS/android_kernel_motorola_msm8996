@@ -1344,7 +1344,6 @@ int dwc3_debugfs_init(struct dwc3 *dwc)
 	file = debugfs_create_file("int_events", S_IRUGO | S_IWUSR, root,
 			dwc, &dwc3_gadget_dbg_events_fops);
 	if (!file) {
-		ret = -ENOMEM;
 		goto err1;
 	}
 
