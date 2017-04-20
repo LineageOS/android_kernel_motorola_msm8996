@@ -774,6 +774,12 @@ limSendDelStaCnf(tpAniSirGlobal pMac, tSirMacAddr staDsAddr,
         }
 
         psessionEntry->limAID = 0;
+
+    } else if (
+       (mlmStaContext.cleanupTrigger == eLIM_LINK_MONITORING_DISASSOC) ||
+       (mlmStaContext.cleanupTrigger == eLIM_LINK_MONITORING_DEAUTH)) {
+       /* only for non-STA cases PE/SME is serialized */
+       return;
     }
 
     if ((mlmStaContext.cleanupTrigger ==
@@ -4336,10 +4342,10 @@ tSirRetStatus limStaSendAddBssPreAssoc( tpAniSirGlobal pMac, tANI_U8 updateEntry
     vos_mem_set((tANI_U8 *) pAddBssParams, sizeof( tAddBssParams ), 0);
 
 
-    limExtractApCapabilities(pMac,
+    limExtractApCapabilities( pMac,
                             (tANI_U8 *) bssDescription->ieFields,
-                            GET_IE_LEN_IN_BSS(bssDescription->length),
-                            pBeaconStruct);
+                            limGetIElenFromBssDescription( bssDescription ),
+                            pBeaconStruct );
 
     if(pMac->lim.gLimProtectionControl != WNI_CFG_FORCE_POLICY_PROTECTION_DISABLE)
         limDecideStaProtectionOnAssoc(pMac, pBeaconStruct, psessionEntry);
